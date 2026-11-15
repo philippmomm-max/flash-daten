@@ -1,0 +1,47 @@
+name: Sammler Radio (ffn, ROCK ANTENNE)
+
+# Einmal taeglich: Blitzer-Meldungen von radio ffn und ROCK ANTENNE Hamburg abrufen, an data/ anhaengen
+# und radio-stellen.json (letzte 7 Tage) fuer die App Flash neu erzeugen. 06:00 UTC = 07:00 Winterzeit
+# (08:00 Sommerzeit); GitHub kann geplante Laeufe verzoegern.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: radio-sammler
+  cancel-in-progress: false
+
+jobs:
+  sammeln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: radio ffn abrufen
+        id: ffn
+        continue-on-error: true
+        run: python3 -I tools/ffn.py --out "data/ffn/$(date -u +%Y-%m).jsonl"
+      - name: ROCK ANTENNE abrufen
+        id: rock
+        continue-on-error: true
+        run: python3 -I tools/rockantenne.py --out "data/rockantenne/$(date -u +%Y-%m).jsonl"
+      - name: radio-stellen.json erzeugen
+        run: python3 -I tools/stellen.py
+      - name: Speichern
+        run: |
+          git config user.name "radio-sammler"
+          git config user.email "noreply@github.com"
+          git add -A
+          git commit -qm "Sammler $(date -u +%Y-%m-%dT%H:%MZ)" || echo "nichts Neues"
+          git pull -q --rebase origin main
+          git push -q origin HEAD:main
+      # Ein Abruf schlug fehl (z. B. Seitenaufbau geaendert): Lauf rot markieren, Daten der anderen Quelle sind gespeichert.
+      - name: Abrufe pruefen
+        if: steps.ffn.outcome == 'failure' || steps.rock.outcome == 'failure'
+        run: |
+          echo "ffn: ${{ steps.ffn.outcome }}, ROCK ANTENNE: ${{ steps.rock.outcome }}"
+          exit 1
